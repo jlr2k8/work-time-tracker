@@ -56,6 +56,76 @@ python track_work.py ../myproject 2025-11-01 "john|John"
 python track_work.py ../myproject 2025-11-01 "john|John" abc123xyz
 ```
 
+## Command-Line Flags
+
+The script supports several optional flags for invoice generation and output control:
+
+### Invoice Generation Flags
+
+#### `--invoice`
+Generate an invoice PDF from the tracking data.
+
+```bash
+# Generate invoice with default settings
+python track_work.py ../myproject 2025-11-01 "john|John" --invoice
+```
+
+#### `--invoice-num <number>`
+Set the invoice number (default: 1).
+
+```bash
+# Generate invoice #3
+python track_work.py ../myproject 2025-11-01 "john|John" --invoice --invoice-num 3
+```
+
+#### `--invoice-date <date>`
+Set the invoice date in MM/DD/YY format (defaults to today). Also accepts YYYY-MM-DD format.
+
+```bash
+# Set invoice date to November 20, 2024
+python track_work.py ../myproject 2025-11-01 "john|John" --invoice --invoice-date 11/20/25
+
+# Or use YYYY-MM-DD format
+python track_work.py ../myproject 2025-11-01 "john|John" --invoice --invoice-date 2025-11-20
+```
+
+#### `--invoice-output <directory>`
+Specify the directory where the invoice PDF will be saved (default: current directory).
+
+```bash
+# Save invoice to a specific directory
+python track_work.py ../myproject 2025-11-01 "john|John" --invoice --invoice-output ./invoices
+```
+
+#### `--breakdown`
+Include a detailed work breakdown page in the invoice PDF. This page shows work details, commit matching, and calculations.
+
+```bash
+# Generate invoice with detailed breakdown page
+python track_work.py ../myproject 2025-11-01 "john|John" --invoice --breakdown
+```
+
+#### `--skip-warnings`
+Skip warnings about cards that have estimates but no tracked hours (commits or comments). By default, the script will stop invoice generation if such cards are found.
+
+```bash
+# Generate invoice even if some cards are missing hour tracking
+python track_work.py ../myproject 2025-11-01 "john|John" --invoice --skip-warnings
+```
+
+### Complete Example
+
+```bash
+# Generate invoice #5 with custom date, breakdown page, and save to invoices folder
+python track_work.py ../myproject 2025-11-01 "john|John" \
+  --invoice \
+  --invoice-num 5 \
+  --invoice-date 11/30/24 \
+  --invoice-output ./invoices \
+  --breakdown \
+  --skip-warnings
+```
+
 ## Configuration
 
 ### Environment Variables
