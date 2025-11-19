@@ -464,6 +464,24 @@ def get_commit_stats(repo_path: str, since_date: str, author: str = None,
 				if wip_done_lists:
 					print(f"  Lists included: {', '.join(wip_done_lists.values())}")
 			
+			# Filter by member ID if configured (before matching commits)
+			if config and config.trello_member_id:
+				member_id = config.trello_member_id
+				print(f"\nFiltering cards by member ID: {member_id[:8]}...")
+				# Get basic member info for cards (more efficient than full details)
+				member_filtered_cards = []
+				for card in filtered_cards:
+					try:
+						# Get just the members for this card (lighter API call)
+						members = trello_client._request(f"cards/{card['id']}/members")
+						card_member_ids = [m.get('id') for m in members]
+						if member_id in card_member_ids:
+							member_filtered_cards.append(card)
+					except:
+						continue
+				print(f"Filtered to {len(member_filtered_cards)} cards assigned to you (out of {len(filtered_cards)} in WIP/Done)")
+				filtered_cards = member_filtered_cards
+			
 			# Match commits to cards first (using basic card info)
 			print(f"\nMatching {len(commits)} commits to {len(filtered_cards)} cards...")
 			card_commits = trello_client.match_commits_to_cards(commits, filtered_cards)
