@@ -401,7 +401,6 @@ class InvoiceGenerator:
 					# Only show pie chart if there's data
 					if billed_hours > 0 or not_billed_hours > 0:
 						ax.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90, colors=colors_pie)
-						ax.set_title('Hours Breakdown: Billed vs Not Billed', fontsize=11, fontweight='bold', pad=10)
 					
 					plt.tight_layout(pad=1.5)
 					img_path = self._save_temp_image(fig, 'hours_breakdown')
@@ -458,7 +457,6 @@ class InvoiceGenerator:
 					ax.set_yticks(range(len(cards)))
 					ax.set_yticklabels(cards, fontsize=7)
 					ax.set_xlabel('Hours', fontsize=9, fontweight='bold')
-					ax.set_title('Top Cards by Hours Worked', fontsize=11, fontweight='bold', pad=10)
 					ax.invert_yaxis()  # Top card at top
 					
 					# Add value labels on bars
@@ -534,7 +532,6 @@ class InvoiceGenerator:
 					ax.bar(dates, hours_list, color='#9b59b6', alpha=0.7)
 					ax.set_xlabel('Date', fontsize=9, fontweight='bold')
 					ax.set_ylabel('Hours', fontsize=9, fontweight='bold')
-					ax.set_title('Daily Work Distribution (Last 14 Days)', fontsize=11, fontweight='bold', pad=10)
 					ax.tick_params(axis='x', rotation=45, labelsize=7)
 					ax.tick_params(axis='y', labelsize=7)
 					
@@ -566,36 +563,35 @@ class InvoiceGenerator:
 				category_hours[category] += hours
 			
 			if category_hours:
-				# Use square figure for pie chart
-				fig, ax = plt.subplots(figsize=(5, 5))
+				# Use square figure for pie chart - slightly larger to prevent squeezing
+				fig, ax = plt.subplots(figsize=(6, 6))
 				categories = list(category_hours.keys())
 				hours = list(category_hours.values())
 				
 				# Use different colors for each category
 				colors_pie = plt.cm.Set3(range(len(categories)))
 				wedges, texts, autotexts = ax.pie(hours, labels=categories, autopct='%1.1f%%', 
-												  startangle=90, colors=colors_pie, textprops={'fontsize': 9})
+												  startangle=90, colors=colors_pie, textprops={'fontsize': 10})
 				
 				# Make percentage text bold and readable
 				for autotext in autotexts:
 					autotext.set_color('white')
 					autotext.set_fontweight('bold')
-					autotext.set_fontsize(9)
+					autotext.set_fontsize(10)
 				
 				# Improve label text
 				for text in texts:
-					text.set_fontsize(9)
+					text.set_fontsize(10)
 				
-				ax.set_title('Hours by Category', fontsize=11, fontweight='bold', pad=10)
-				
-				plt.tight_layout(pad=1.5)
+				# Remove title from chart (we have it in the Paragraph above)
+				plt.tight_layout(pad=2.0)
 				img_path = self._save_temp_image(fig, 'category_breakdown')
 				self._temp_images.append(img_path)
-				# Keep image and label together
+				# Keep image and label together - use same size as figure to prevent distortion
 				chart_elements = [
 					Paragraph("<b>Hours by Category</b>", self.styles['InvoiceHeader']),
 					Spacer(1, 0.1*inch),
-					Image(img_path, width=5*inch, height=5*inch)  # Maintain square aspect ratio
+					Image(img_path, width=6*inch, height=6*inch)  # Match figure size to prevent squeezing
 				]
 				story.append(KeepTogether(chart_elements))
 				story.append(Spacer(1, 0.3*inch))

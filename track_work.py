@@ -1,14 +1,49 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Work Time Tracker - Analyze git commits and Trello tasks to estimate billable hours
 """
 
 import subprocess
 import sys
+import io
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 import json
+
+# Helper function to sanitize text for safe printing (removes emojis, special characters)
+def sanitize_text(text: str) -> str:
+	"""Remove emojis, em dashes, and other problematic Unicode characters"""
+	if not isinstance(text, str):
+		return str(text)
+	
+	# Remove em dashes (—) and en dashes (–), replace with regular hyphens
+	text = text.replace('—', '-').replace('–', '-')
+	
+	# Remove emojis and other non-ASCII characters that cause encoding issues
+	# Keep basic ASCII printable characters (32-126) plus common punctuation
+	sanitized = ''
+	for char in text:
+		# Keep ASCII printable characters
+		if 32 <= ord(char) <= 126:
+			sanitized += char
+		# Keep common Unicode punctuation that's safe
+		elif char in ['\n', '\t', '\r']:
+			sanitized += char
+		# Replace everything else with a space or hyphen if it looks like punctuation
+		elif char in ['…', '…']:  # Ellipsis
+			sanitized += '...'
+		else:
+			# For other Unicode, try to keep if it's a common character, otherwise skip
+			try:
+				char.encode('ascii')
+				sanitized += char
+			except UnicodeEncodeError:
+				# Skip emojis and other problematic characters
+				pass
+	
+	return sanitized
 
 from config import Config
 from trello_client import TrelloClient
@@ -326,7 +361,7 @@ def estimate_hours_with_trello(
 				actions_count = len(card.get('actions', []))
 				comment_hours = trello_client.extract_hours_from_comments(card, since_date)
 				if comment_hours > 0:
-					card_name = card.get('name', 'Unknown')[:40]
+					card_name = sanitize_text(card.get('name', 'Unknown')[:40])
 					print(f"  Card {card.get('idShort', '?')} ({card_name}): Found {comment_hours:.2f}h in comments ({actions_count} actions)")
 		except Exception as e:
 			print(f"  Warning: Failed to extract comment hours for card {card.get('idShort', '?')}: {e}")
@@ -335,12 +370,17 @@ def estimate_hours_with_trello(
 			# Card has matching commits
 			commit_hours = estimate_hours_from_commits(card_commits_list)
 			
-			# If comment hours exist, use them as source of truth (actual time reported)
-			# Commit hours are just for validation/comparison, not to be added
+			# Cross-check: Balance comment hours (manually logged) vs commit hours (calculated)
+			# Use weighted average when both exist to balance manual logging with code-based estimates
 			if comment_hours > 0:
-				# Comment hours = actual time spent (source of truth)
-				# Commit hours = validation only
-				total_card_hours = comment_hours
+				if commit_hours > 0:
+					# Both exist - use weighted average (favor comment hours but include commit hours)
+					# Weight: 80% comment hours, 20% commit hours
+					# This balances manual logging with code-based validation while respecting logged time
+					total_card_hours = (comment_hours * 0.8) + (commit_hours * 0.2)
+				else:
+					# Only comment hours exist
+					total_card_hours = comment_hours
 			else:
 				# No comment hours, use commit-based estimation
 				total_card_hours = commit_hours
@@ -462,7 +502,8 @@ def get_commit_stats(repo_path: str, since_date: str, author: str = None,
 				filtered_cards = [card for card in cards if card.get('idList') in wip_done_lists]
 				print(f"Filtered cards: {len(filtered_cards)} in WIP/Done lists (out of {len(cards)} total)")
 				if wip_done_lists:
-					print(f"  Lists included: {', '.join(wip_done_lists.values())}")
+					sanitized_list_names = [sanitize_text(name) for name in wip_done_lists.values()]
+					print(f"  Lists included: {', '.join(sanitized_list_names)}")
 			
 			# Filter by member ID if configured (before matching commits)
 			if config and config.trello_member_id:
@@ -480,7 +521,16 @@ def get_commit_stats(repo_path: str, since_date: str, author: str = None,
 					except:
 						continue
 				print(f"Filtered to {len(member_filtered_cards)} cards assigned to you (out of {len(filtered_cards)} in WIP/Done)")
-				filtered_cards = member_filtered_cards
+				
+				# If member filtering results in 0 cards but we have commits that reference cards,
+				# skip the member filter to allow matching (cards might not be assigned but commits reference them)
+				if len(member_filtered_cards) == 0 and len(commits) > 0:
+					print(f"  Warning: No cards assigned to you, but {len(commits)} commits found.")
+					print(f"     Skipping member filter to allow card matching by commit references.")
+					print(f"     (Cards may not be assigned in Trello but commits reference them)")
+					# Keep using filtered_cards (before member filtering) so matching can proceed
+				else:
+					filtered_cards = member_filtered_cards
 			
 			# Match commits to cards first (using basic card info)
 			print(f"\nMatching {len(commits)} commits to {len(filtered_cards)} cards...")
@@ -614,7 +664,7 @@ def generate_invoice_line_items(stats: Dict, config: Config) -> List[Dict]:
 		for match in matched_cards:
 			card = match['card']
 			task_num = extract_task_number(card) or 'N/A'
-			card_name = card.get('name', 'Unknown Task')
+			card_name = sanitize_text(card.get('name', 'Unknown Task'))
 			
 			# Check if card is manually excluded
 			if task_num in config.excluded_cards:
@@ -646,7 +696,7 @@ def generate_invoice_line_items(stats: Dict, config: Config) -> List[Dict]:
 				print(f"  Matched {len(commits)} commits ({explicit_count} explicit, {fuzzy_count} fuzzy):")
 				for commit in commits[:3]:  # Show first 3 commits
 					match_type = commit.get('_match_type', 'unknown')
-					msg = commit.get('message', '')[:60]
+					msg = sanitize_text(commit.get('message', '')[:60])
 					lines = commit.get('lines_changed', 0)
 					print(f"    [{match_type}] {msg} ({lines} lines)")
 				if len(commits) > 3:
@@ -816,7 +866,8 @@ def print_report(stats: Dict, author: str = None, config: Config = None):
 				comment_hours = match.get('comment_hours', 0.0)
 				total_hours = match.get('total_hours', commit_hours)
 				status = "[OK]" if est and abs(est - total_hours) < 1.0 else "[~]"
-				print(f"  {status} {card['name'][:50]}")
+				card_name = sanitize_text(card['name'][:50])
+				print(f"  {status} {card_name}")
 				if est:
 					if comment_hours > 0:
 						print(f"      Est: {est}h | Actual: {total_hours}h (commits: {commit_hours}h + comments: {comment_hours}h) | Commits: {len(match['commits'])}")
@@ -836,7 +887,8 @@ def print_report(stats: Dict, author: str = None, config: Config = None):
 			for match in details['unmatched_cards'][:5]:
 				card = match['card']
 				est = match['estimated_hours']
-				print(f"  [WARNING] {card['name'][:50]} - Est: {est}h")
+				card_name = sanitize_text(card['name'][:50])
+				print(f"  [WARNING] {card_name} - Est: {est}h")
 	
 	# Show recent commits
 	if stats['commits']:
@@ -941,7 +993,7 @@ Examples:
 				
 				for card_info in cards_needing_comments:
 					card = card_info['card']
-					card_name = card.get('name', 'Unknown')[:60]
+					card_name = sanitize_text(card.get('name', 'Unknown')[:60])
 					est = card_info.get('estimated_hours', 0)
 					card_id = card.get('id', '')
 					card_url = f"https://trello.com/c/{card_id}"

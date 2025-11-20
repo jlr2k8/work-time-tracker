@@ -46,12 +46,12 @@ def calculate_trajectory(repo_path: str, since_date: str = "2025-11-01", author:
     
     # Warn if filters not set
     if not author:
-        print("\n⚠️  WARNING: No git author filter specified. This will include ALL commits.")
+        print("\nWARNING: No git author filter specified. This will include ALL commits.")
         print("   To filter to only your commits, provide your git author name.")
     if config.trello_member_id:
-        print(f"✓ Filtering Trello cards by your member ID")
+        print(f"Filtering Trello cards by your member ID")
     else:
-        print("\n⚠️  WARNING: TRELLO_MEMBER_ID not set. This will include cards assigned to others.")
+        print("\nWARNING: TRELLO_MEMBER_ID not set. This will include cards assigned to others.")
         print("   Set TRELLO_MEMBER_ID in .env to filter to only your assigned cards.")
     print()
     
