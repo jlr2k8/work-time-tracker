@@ -333,7 +333,7 @@ class InvoiceGenerator:
 					# Hours breakdown
 					hours_text = f"Hours: {commit_hours:.2f}h commits"
 					if comment_hours > 0:
-						hours_text += f" + {comment_hours:.2f}h comments"
+						hours_text += f" + {comment_hours:.2f}h mentioned in Trello comments"
 					hours_text += f" = {total_hours:.2f}h total"
 					story.append(Paragraph(hours_text, self.styles['LineItemWrap']))
 					
@@ -407,7 +407,7 @@ class InvoiceGenerator:
 					self._temp_images.append(img_path)
 					# Keep image and label together, use smaller size
 					chart_elements = [
-						Paragraph("<b>Hours Breakdown</b>", self.styles['InvoiceHeader']),
+						Paragraph("<b>Hours Breakdown</b><br/><p>This chart shows the breakdown of total work hours. Billed hours are from line items on this invoice (calculated using weighted average of comment hours and commit hours). Not Billed hours are from unmatched commits or cards that weren't included in that invoice.</p>", self.styles['InvoiceHeader']),
 						Spacer(1, 0.1*inch),
 						Image(img_path, width=5*inch, height=5*inch)  # Maintain square aspect ratio
 					]
@@ -458,6 +458,11 @@ class InvoiceGenerator:
 					ax.set_yticklabels(cards, fontsize=7)
 					ax.set_xlabel('Hours', fontsize=9, fontweight='bold')
 					ax.invert_yaxis()  # Top card at top
+					
+					# Calculate max hours and set x-axis limit with padding for text labels
+					max_hours = max(hours) if hours else 0
+					# Add 15% padding to accommodate text labels
+					ax.set_xlim(0, max_hours * 1.15)
 					
 					# Add value labels on bars
 					for i, (bar, hour) in enumerate(zip(bars, hours)):
@@ -554,7 +559,73 @@ class InvoiceGenerator:
 					story.append(Spacer(1, 0.3*inch))
 					plt.close(fig)
 			
-			# 4. Category Breakdown Pie Chart
+			# 4. Estimated vs Actual Hours Line Graph
+			if stats.get('trello_enabled') and 'estimation_details' in stats:
+				details = stats['estimation_details']
+				matched_cards = details.get('matched_cards', [])
+				
+				# Get cards with both estimated hours and comment hours for comparison
+				comparison_data = []
+				import track_work
+				for match in matched_cards:
+					card = match['card']
+					estimated = match.get('estimated_hours')
+					comment_hours = match.get('comment_hours', 0)
+					
+					# Only include cards that have both estimated and comment hours
+					if estimated and estimated > 0 and comment_hours > 0:
+						task_num = track_work.extract_task_number(card) or 'N/A'
+						card_name = card.get('name', 'Unknown')[:25]
+						display_name = f"#{task_num}"
+						comparison_data.append({
+							'name': display_name,
+							'estimated': estimated,
+							'actual': comment_hours
+						})
+				
+				# Sort by estimated hours for better visualization
+				comparison_data.sort(key=lambda x: x['estimated'], reverse=True)
+				comparison_data = comparison_data[:15]  # Top 15 for readability
+				
+				if comparison_data:
+					fig, ax = plt.subplots(figsize=(7, 4))
+					card_names = [d['name'] for d in comparison_data]
+					estimated_hours = [d['estimated'] for d in comparison_data]
+					actual_hours = [d['actual'] for d in comparison_data]
+					
+					x_pos = range(len(card_names))
+					ax.plot(x_pos, estimated_hours, marker='o', label='Estimated (from title)', 
+						   color='#3498db', linewidth=2, markersize=6)
+					ax.plot(x_pos, actual_hours, marker='s', label='Actual (from Trello comments)', 
+						   color='#2ecc71', linewidth=2, markersize=6)
+					
+					ax.set_xlabel('Card', fontsize=9, fontweight='bold')
+					ax.set_ylabel('Hours', fontsize=9, fontweight='bold')
+					ax.set_title('Estimated vs Actual Hours by Card', fontsize=11, fontweight='bold', pad=10)
+					ax.set_xticks(x_pos)
+					ax.set_xticklabels(card_names, rotation=45, ha='right', fontsize=7)
+					ax.legend(loc='best', fontsize=8)
+					ax.grid(True, alpha=0.3)
+					ax.tick_params(axis='y', labelsize=7)
+					
+					# Add value labels on points
+					for i, (est, actual) in enumerate(zip(estimated_hours, actual_hours)):
+						ax.text(i, est + 0.2, f'{est:.1f}h', ha='center', va='bottom', fontsize=6, color='#3498db')
+						ax.text(i, actual - 0.2, f'{actual:.1f}h', ha='center', va='top', fontsize=6, color='#2ecc71')
+					
+					plt.tight_layout(pad=2.0)
+					img_path = self._save_temp_image(fig, 'estimated_vs_actual')
+					self._temp_images.append(img_path)
+					chart_elements = [
+						Paragraph("<b>Estimated vs Actual Hours</b>", self.styles['InvoiceHeader']),
+						Spacer(1, 0.1*inch),
+						Image(img_path, width=7*inch, height=4*inch)
+					]
+					story.append(KeepTogether(chart_elements))
+					story.append(Spacer(1, 0.3*inch))
+					plt.close(fig)
+			
+			# 5. Category Breakdown Pie Chart
 			category_hours = defaultdict(float)
 			for item in line_items:
 				category = item.get('category', 'MAINT')

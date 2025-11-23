@@ -303,9 +303,16 @@ class TrelloClient:
 		if matches:
 			return matches[0]  # This will be a name, not an ID
 	
-	def match_commits_to_cards(self, commits: List[Dict], cards: List[Dict]) -> Dict[str, List[Dict]]:
+	def match_commits_to_cards(self, commits: List[Dict], cards: List[Dict], expected_author: str = None) -> Dict[str, List[Dict]]:
 		"""
 		Match git commits to Trello cards
+		
+		Args:
+			commits: List of commit dictionaries with 'hash', 'message', 'author', 'email', 'branches', etc.
+			cards: List of Trello card dictionaries
+			expected_author: Optional author name to filter commits. If provided, commits by other authors
+				matched only by branch name will be excluded (to avoid counting commits from main branch
+				that were merged into your feature branch)
 		
 		Returns:
 			Dictionary mapping card IDs to lists of matching commits
@@ -321,10 +328,15 @@ class TrelloClient:
 		cards_by_number = {str(card.get('idShort', '')): card for card in cards if card.get('idShort')}
 		
 		print(f"Matching {len(commits)} commits to {len(cards)} cards...")
+		if expected_author:
+			print(f"Filtering: Only commits by '{expected_author}' will be matched by branch name")
+		
+		excluded_by_author = 0
 		
 		for i, commit in enumerate(commits):
 			message = commit['message']
 			branches = commit.get('branches', [])  # Get branch names from commit
+			commit_author = commit.get('author', '')
 			
 			# Try to find matching card
 			matched_card = None
@@ -332,6 +344,7 @@ class TrelloClient:
 			# PRIORITY 1: Check branch names for card numbers (most reliable!)
 			# Branch names like "feature/99-vendor-estimate-creation" are explicit
 			match_type = None
+			matched_by_branch = False
 			if branches:
 				for branch in branches:
 					# Look for card number in branch name (e.g., feature/99-, 99-vendor, etc.)
@@ -339,8 +352,25 @@ class TrelloClient:
 					if branch_match:
 						card_num = branch_match.group(1)
 						if card_num in cards_by_number:
+							# If expected_author is provided, check that this commit is by the expected author
+							# This prevents commits from main (by other authors) from being matched
+							# when you merge main into your feature branch
+							if expected_author:
+								# Normalize author names for comparison (case-insensitive, partial match)
+								author_lower = commit_author.lower()
+								expected_lower = expected_author.lower()
+								# Check if expected author name appears in commit author name
+								# This handles variations like "John Doe" vs "John" or "jdoe" vs "John Doe"
+								if expected_lower not in author_lower and author_lower not in expected_lower:
+									# Check if any part of expected author matches
+									expected_parts = expected_lower.split()
+									author_parts = author_lower.split()
+									if not any(ep in author_lower or ap in expected_lower for ep in expected_parts for ap in author_parts):
+										excluded_by_author += 1
+										continue  # Skip this match - commit is by different author
 							matched_card = cards_by_number[card_num]
 							match_type = 'explicit'
+							matched_by_branch = True
 							break
 			
 			# PRIORITY 2: Check for card ID in commit message
@@ -468,6 +498,8 @@ class TrelloClient:
 			if (i + 1) % 10 == 0:
 				print(f"  Matched {i + 1}/{len(commits)} commits...")
 		
+		if excluded_by_author > 0:
+			print(f"  Excluded {excluded_by_author} commit(s) matched by branch name but authored by someone else")
 		print(f"Done matching. Found {len(card_commits)} cards with matching commits.")
 		return card_commits
 	

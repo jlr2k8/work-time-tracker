@@ -71,7 +71,8 @@ def debug_card_matches(repo_path: str, since_date: str, card_number: str,
     
     # Match commits to cards
     print("Matching commits to cards...")
-    card_commits = trello_client.match_commits_to_cards(commits, cards)
+    # Pass author filter to exclude commits from main (by other authors) when matched by branch name
+    card_commits = trello_client.match_commits_to_cards(commits, cards, expected_author=author)
     print()
     
     # Get commits matched to this card
@@ -93,7 +94,9 @@ def debug_card_matches(repo_path: str, since_date: str, card_number: str,
         hash_short = commit['hash'][:8]
         lines = commit.get('lines_changed', 0)
         
+        commit_author = commit.get('author', 'Unknown')
         print(f"\n{i}. Commit {hash_short} ({date}) - {lines:,} lines changed")
+        print(f"   Author: {commit_author}")
         print(f"   Message: {message[:80]}")
         
         # Explain why it matched

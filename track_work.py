@@ -375,9 +375,9 @@ def estimate_hours_with_trello(
 			if comment_hours > 0:
 				if commit_hours > 0:
 					# Both exist - use weighted average (favor comment hours but include commit hours)
-					# Weight: 80% comment hours, 20% commit hours
+					# Weight: 90% comment hours, 10% commit hours
 					# This balances manual logging with code-based validation while respecting logged time
-					total_card_hours = (comment_hours * 0.8) + (commit_hours * 0.2)
+					total_card_hours = (comment_hours * 0.9) + (commit_hours * 0.1)
 				else:
 					# Only comment hours exist
 					total_card_hours = comment_hours
@@ -534,7 +534,8 @@ def get_commit_stats(repo_path: str, since_date: str, author: str = None,
 			
 			# Match commits to cards first (using basic card info)
 			print(f"\nMatching {len(commits)} commits to {len(filtered_cards)} cards...")
-			card_commits = trello_client.match_commits_to_cards(commits, filtered_cards)
+			# Pass author filter to exclude commits from main (by other authors) when matched by branch name
+			card_commits = trello_client.match_commits_to_cards(commits, filtered_cards, expected_author=author)
 			print(f"Match results: {len(card_commits)} cards have matching commits")
 			
 			# Fetch full details (comments) for ALL cards in WIP/Done lists
