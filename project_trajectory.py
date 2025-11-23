@@ -63,14 +63,47 @@ def calculate_trajectory(repo_path: str, since_date: str = "2025-11-01", author:
     
     # Calculate days worked
     commits = stats.get('commits', [])
-    if not commits:
-        print("No commits found.")
-        return
     
     # Get unique dates with commits
-    dates_with_work = set()
+    dates_with_commits = set()
     for commit in commits:
-        dates_with_work.add(commit['date'])
+        dates_with_commits.add(commit['date'])
+    
+    # Also get dates from Trello comments (if available)
+    dates_with_comments = set()
+    if stats.get('trello_enabled') and 'estimation_details' in stats:
+        details = stats['estimation_details']
+        matched_cards = details.get('matched_cards', [])
+        try:
+            from trello_client import TrelloClient
+            try:
+                from dateutil import parser as date_parser
+            except ImportError:
+                date_parser = None
+            
+            for match in matched_cards:
+                card = match.get('card', {})
+                actions = card.get('actions', [])
+                comments = [a for a in actions if a.get('type') == 'commentCard']
+                
+                for comment in comments:
+                    comment_date_str = comment.get('date', '')
+                    if comment_date_str and date_parser:
+                        try:
+                            comment_dt = date_parser.parse(comment_date_str)
+                            comment_date = comment_dt.date().strftime('%Y-%m-%d')
+                            # Only count comments with hours logged
+                            text = comment.get('data', {}).get('text', '')
+                            # Check if comment has hours (simple check)
+                            if any(word in text.lower() for word in ['hour', 'h', 'min', 'worked', 'spent']):
+                                dates_with_comments.add(comment_date)
+                        except:
+                            pass
+        except:
+            pass
+    
+    # Combine commit dates and comment dates
+    dates_with_work = dates_with_commits.union(dates_with_comments)
     
     # Calculate date range
     start_date = datetime.strptime(since_date, "%Y-%m-%d")

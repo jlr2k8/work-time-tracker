@@ -402,8 +402,14 @@ class InvoiceGenerator:
 					if billed_hours > 0 or not_billed_hours > 0:
 						ax.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90, colors=colors_pie)
 					
-					plt.tight_layout(pad=1.5)
-					img_path = self._save_temp_image(fig, 'hours_breakdown')
+					# Ensure circular shape
+					ax.set_aspect('equal')
+					plt.axis('equal')
+					plt.tight_layout(pad=1.5, rect=[0, 0, 1, 1])
+					# Save with fixed aspect ratio (no tight bbox for pie charts)
+					fd, img_path = tempfile.mkstemp(suffix='.png', prefix='hours_breakdown_')
+					os.close(fd)
+					fig.savefig(img_path, dpi=150, bbox_inches=None, facecolor='white', pad_inches=0.2)
 					self._temp_images.append(img_path)
 					# Keep image and label together, use smaller size
 					chart_elements = [
@@ -487,7 +493,17 @@ class InvoiceGenerator:
 			if stats.get('commits'):
 				commits = stats['commits']
 				# Group commits by date and calculate hours per day
-				daily_hours = defaultdict(float)
+				daily_commit_hours = defaultdict(float)
+				daily_comment_hours_dict = defaultdict(float)
+				
+				# Get comment hours by date from matched cards (if available)
+				if stats.get('trello_enabled') and 'estimation_details' in stats:
+					details = stats['estimation_details']
+					matched_cards = details.get('matched_cards', [])
+					# Get all cards from matched_cards
+					cards = [match['card'] for match in matched_cards]
+					# Extract comment hours by date (pass None for since_date to get all dates)
+					daily_comment_hours_dict = self._extract_comment_hours_by_date(cards, since_date=None)
 				
 				# Group commits by date
 				commits_by_date = defaultdict(list)
@@ -497,7 +513,7 @@ class InvoiceGenerator:
 					if date:
 						commits_by_date[date].append(commit)
 				
-				# Calculate hours per day using same logic as track_work.py
+				# Calculate commit-based hours per day using same logic as track_work.py
 				for date, day_commits in commits_by_date.items():
 					total_lines = sum(c.get('lines_changed', 0) for c in day_commits)
 					messages = [c.get('message', '').lower() for c in day_commits]
@@ -520,11 +536,31 @@ class InvoiceGenerator:
 					
 					# Calculate hours from lines
 					if total_lines > 0:
-						day_hours = max(0.25, total_lines / lines_per_hour)
+						day_commit_hours = max(0.25, total_lines / lines_per_hour)
 					else:
-						day_hours = 0.25 if len(day_commits) > 0 else 0.0
+						day_commit_hours = 0.25 if len(day_commits) > 0 else 0.0
 					
-					daily_hours[date] = day_hours
+					daily_commit_hours[date] = day_commit_hours
+				
+				# Combine commit hours and comment hours using same weighted average as cards
+				# Formula: (comment_hours × 0.9) + (commit_hours × 0.1) when both exist
+				daily_hours = defaultdict(float)
+				all_dates = set(list(daily_commit_hours.keys()) + list(daily_comment_hours_dict.keys()))
+				
+				for date in all_dates:
+					commit_hours = daily_commit_hours.get(date, 0.0)
+					comment_hours = daily_comment_hours_dict.get(date, 0.0)
+					
+					if comment_hours > 0:
+						if commit_hours > 0:
+							# Both exist - use weighted average (same as card calculation)
+							daily_hours[date] = (comment_hours * 0.9) + (commit_hours * 0.1)
+						else:
+							# Only comment hours exist
+							daily_hours[date] = comment_hours
+					else:
+						# No comment hours, use commit-based estimation
+						daily_hours[date] = commit_hours
 				
 				if daily_hours:
 					# Sort by date
@@ -559,33 +595,263 @@ class InvoiceGenerator:
 					story.append(Spacer(1, 0.3*inch))
 					plt.close(fig)
 			
+			# 3b. Daily Hours Timeline (all days including zeros) - only from billed cards
+			if stats.get('trello_enabled') and 'estimation_details' in stats:
+				details = stats['estimation_details']
+				matched_cards = details.get('matched_cards', [])
+				
+				# Only use cards that are actually billed (in line_items)
+				import track_work
+				billed_task_nums = {item.get('task_number', '') for item in line_items}
+				billed_cards = []
+				for match in matched_cards:
+					card = match['card']
+					task_num = track_work.extract_task_number(card) or 'N/A'
+					if task_num in billed_task_nums:
+						billed_cards.append(match)
+				
+				if billed_cards:
+					# Get comment hours by date from billed cards only
+					cards = [match['card'] for match in billed_cards]
+					daily_comment_hours_dict = self._extract_comment_hours_by_date(cards, since_date=None)
+					
+					# Get commit dates from billed cards only
+					all_work_dates = set()
+					billed_commits = []
+					for match in billed_cards:
+						commits = match.get('commits', [])
+						for commit in commits:
+							date = commit.get('date', '')
+							if date:
+								all_work_dates.add(date)
+								billed_commits.append(commit)
+					all_work_dates.update(daily_comment_hours_dict.keys())
+					
+					# Use the full invoice period: from earliest work date to today
+					# This ensures we show ALL days, including days with no work
+					if all_work_dates:
+						start_date_str = min(all_work_dates)
+					else:
+						# Fallback: use date_range from stats if available
+						date_range = stats.get('date_range', {})
+						start_date_str = date_range.get('start')
+						if not start_date_str:
+							# Last resort: use today
+							from datetime import datetime
+							start_date_str = datetime.now().strftime('%Y-%m-%d')
+					
+					# End date is today (or latest work date if later)
+					from datetime import datetime
+					today_str = datetime.now().strftime('%Y-%m-%d')
+					if all_work_dates:
+						end_date_str = max(max(all_work_dates), today_str)
+					else:
+						end_date_str = today_str
+					
+					# Only create graph if we have valid dates
+					if start_date_str and end_date_str:
+						# Generate all dates in range
+						from datetime import datetime, timedelta
+						start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
+						end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
+						
+						# Calculate hours per day per card, then sum (matching card billing logic)
+						# This ensures weighted average is applied per card first, then summed
+						daily_total_hours = defaultdict(float)  # Final daily hours (already weighted)
+						
+						# Process each card separately to apply weighted average correctly
+						for match in billed_cards:
+							card = match['card']
+							card_commits = match.get('commits', [])
+							
+							# Get comment hours for this card by date
+							card_comment_hours_by_date = self._extract_comment_hours_by_date([card], since_date=None)
+							
+							# Get commit hours for this card by date
+							card_commits_by_date = defaultdict(list)
+							non_merge_commits = [c for c in card_commits if 'merge' not in c.get('message', '').lower()]
+							for commit in non_merge_commits:
+								date = commit.get('date', '')
+								if date:
+									card_commits_by_date[date].append(commit)
+							
+							# Calculate commit hours per day for this card
+							card_commit_hours_by_date = defaultdict(float)
+							for date, day_commits in card_commits_by_date.items():
+								total_lines = sum(c.get('lines_changed', 0) for c in day_commits)
+								messages = [c.get('message', '').lower() for c in day_commits]
+								
+								has_major_feature = any(
+									'feature' in msg or 'feat' in msg or 
+									'oauth' in msg or 'setup' in msg or
+									'refactor' in msg or 'architecture' in msg
+									for msg in messages
+								)
+								has_docs = any('doc' in msg or 'readme' in msg or 'comment' in msg for msg in messages)
+								
+								if has_major_feature:
+									lines_per_hour = 200
+								elif has_docs:
+									lines_per_hour = 400
+								else:
+									lines_per_hour = 250
+								
+								if total_lines > 0:
+									day_commit_hours = max(0.25, total_lines / lines_per_hour)
+								else:
+									day_commit_hours = 0.25 if len(day_commits) > 0 else 0.0
+								
+								card_commit_hours_by_date[date] = day_commit_hours
+							
+							# For each date this card has work, calculate weighted average per card
+							all_card_dates = set(card_comment_hours_by_date.keys()) | set(card_commits_by_date.keys())
+							for date in all_card_dates:
+								card_comment_hours = card_comment_hours_by_date.get(date, 0.0)
+								card_commit_hours = card_commit_hours_by_date.get(date, 0.0)
+								
+								# Apply weighted average per card (same as card billing)
+								if card_comment_hours > 0:
+									if card_commit_hours > 0:
+										# Both exist - use weighted average
+										card_total_hours = (card_comment_hours * 0.9) + (card_commit_hours * 0.1)
+									else:
+										# Only comment hours
+										card_total_hours = card_comment_hours
+								else:
+									# Only commit hours
+									card_total_hours = card_commit_hours
+								
+								# Sum across all cards for this date
+								daily_total_hours[date] += card_total_hours
+					
+					# Generate all dates in range (including days with no work)
+					all_dates_in_range = []
+					current_date = start_date
+					while current_date <= end_date:
+						date_str = current_date.strftime('%Y-%m-%d')
+						all_dates_in_range.append(date_str)
+						current_date += timedelta(days=1)
+					
+					# Build complete daily hours list - use pre-calculated per-card totals
+					# daily_total_hours already has weighted averages applied per card and summed
+					complete_daily_hours = []
+					for date_str in all_dates_in_range:
+						# Get the total hours for this date (already calculated per-card and summed)
+						total_hours = daily_total_hours.get(date_str, 0.0)
+						complete_daily_hours.append(total_hours)
+					
+					# Only create graph if we have data
+					if all_dates_in_range and (sum(complete_daily_hours) > 0 or len(all_dates_in_range) > 0):
+						# Create graph - make width dynamic based on number of dates
+						num_dates = len(all_dates_in_range)
+						fig, ax = plt.subplots(figsize=(max(8, num_dates * 0.25), 3.5))
+						colors = ['#2ecc71' if h > 0 else '#ecf0f1' for h in complete_daily_hours]
+						# Draw bars for all days - give 0-hour days tiny height so they're visible
+						bar_heights = [h if h > 0 else 0.02 for h in complete_daily_hours]
+						bars = ax.bar(range(len(all_dates_in_range)), bar_heights, color=colors, alpha=0.7, edgecolor='#bdc3c7', linewidth=0.5)
+						
+						ax.set_xlabel('Date', fontsize=9, fontweight='bold')
+						ax.set_ylabel('Hours', fontsize=9, fontweight='bold')
+						#ax.set_title('Daily Hours Timeline (All Days)', fontsize=10, fontweight='bold', pad=8)
+						
+						# Set y-axis range to ensure visibility
+						max_hours = max(complete_daily_hours) if complete_daily_hours else 0
+						if max_hours > 0:
+							ax.set_ylim(bottom=0, top=max(max_hours * 1.15, 1.0))
+						else:
+							ax.set_ylim(bottom=0, top=1.0)  # Show 0-1 range even if no hours
+						
+						# Set x-axis labels - show ALL dates
+						# Format dates for display (e.g., "2025-11-11" -> "11/11")
+						tick_labels = []
+						for date_str in all_dates_in_range:
+							try:
+								date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+								tick_labels.append(date_obj.strftime('%m/%d'))
+							except:
+								tick_labels.append(date_str)
+						
+						# Adjust font size based on number of dates, but show ALL dates
+						if num_dates > 30:
+							font_size = 5
+						elif num_dates > 14:
+							font_size = 6
+						else:
+							font_size = 7
+						
+						# Set all tick positions and show ALL date labels
+						all_tick_positions = list(range(0, num_dates))
+						ax.set_xticks(all_tick_positions)
+						ax.set_xticklabels(tick_labels, rotation=45, ha='right', fontsize=font_size)
+						ax.tick_params(axis='y', labelsize=7)
+						ax.grid(True, alpha=0.3, axis='y')
+						
+						# Add value labels only on bars with hours > 0
+						for i, hours in enumerate(complete_daily_hours):
+							if hours > 0:
+								ax.text(i, hours + 0.05, f'{hours:.1f}h', 
+									   ha='center', va='bottom', fontsize=5)
+						
+						plt.tight_layout(pad=1.5)
+						img_path = self._save_temp_image(fig, 'daily_timeline')
+						self._temp_images.append(img_path)
+					chart_elements = [
+						Paragraph("<b>Daily Hours Timeline</b>", self.styles['InvoiceHeader']),
+						Spacer(1, 0.1*inch),
+						Image(img_path, width=8*inch, height=3.5*inch)
+					]
+					story.append(KeepTogether(chart_elements))
+					story.append(Spacer(1, 0.3*inch))
+					plt.close(fig)
+			
 			# 4. Estimated vs Actual Hours Line Graph
 			if stats.get('trello_enabled') and 'estimation_details' in stats:
 				details = stats['estimation_details']
 				matched_cards = details.get('matched_cards', [])
 				
-				# Get cards with both estimated hours and comment hours for comparison
+				# Get cards with estimated hours and/or actual hours for comparison
+				# Include all cards that have either estimated hours OR total hours (actual work)
 				comparison_data = []
 				import track_work
+				billed_task_nums = {item.get('task_number', '') for item in line_items}
+				
 				for match in matched_cards:
 					card = match['card']
-					estimated = match.get('estimated_hours')
-					comment_hours = match.get('comment_hours', 0)
+					task_num = track_work.extract_task_number(card) or 'N/A'
 					
-					# Only include cards that have both estimated and comment hours
-					if estimated and estimated > 0 and comment_hours > 0:
-						task_num = track_work.extract_task_number(card) or 'N/A'
-						card_name = card.get('name', 'Unknown')[:25]
+					# Only include cards that are in line_items (billed items)
+					if task_num not in billed_task_nums:
+						continue
+					
+					estimated = match.get('estimated_hours') or 0
+					total_hours = match.get('total_hours', 0)  # Use total_hours as actual (includes weighted average)
+					
+					# Include cards that have either estimated hours OR total hours
+					if estimated > 0 or total_hours > 0:
+						# Get latest commit date for chronological sorting (most recent work)
+						commits = match.get('commits', [])
+						latest_date = None
+						if commits:
+							# Get latest commit date (most recent work on this card)
+							commit_dates = [c.get('date', '') for c in commits if c.get('date')]
+							if commit_dates:
+								latest_date = max(commit_dates)
+						
+						# Fallback to card last activity date if no commits
+						if not latest_date:
+							latest_date = card.get('dateLastActivity', card.get('dateCreated', ''))
+						
 						display_name = f"#{task_num}"
 						comparison_data.append({
 							'name': display_name,
 							'estimated': estimated,
-							'actual': comment_hours
+							'actual': total_hours,
+							'date': latest_date or ''  # For sorting
 						})
 				
-				# Sort by estimated hours for better visualization
-				comparison_data.sort(key=lambda x: x['estimated'], reverse=True)
-				comparison_data = comparison_data[:15]  # Top 15 for readability
+				# Sort chronologically by latest date (oldest first, most recent last)
+				comparison_data.sort(key=lambda x: x['date'] if x['date'] else '0000-00-00')
+				# Show all cards, not just top 15
 				
 				if comparison_data:
 					fig, ax = plt.subplots(figsize=(7, 4))
@@ -596,12 +862,12 @@ class InvoiceGenerator:
 					x_pos = range(len(card_names))
 					ax.plot(x_pos, estimated_hours, marker='o', label='Estimated (from title)', 
 						   color='#3498db', linewidth=2, markersize=6)
-					ax.plot(x_pos, actual_hours, marker='s', label='Actual (from Trello comments)', 
+					ax.plot(x_pos, actual_hours, marker='s', label='Actual (total hours)', 
 						   color='#2ecc71', linewidth=2, markersize=6)
 					
 					ax.set_xlabel('Card', fontsize=9, fontweight='bold')
 					ax.set_ylabel('Hours', fontsize=9, fontweight='bold')
-					ax.set_title('Estimated vs Actual Hours by Card', fontsize=11, fontweight='bold', pad=10)
+					# ax.set_title('Estimated vs Actual Hours by Card', fontsize=11, fontweight='bold', pad=10)
 					ax.set_xticks(x_pos)
 					ax.set_xticklabels(card_names, rotation=45, ha='right', fontsize=7)
 					ax.legend(loc='best', fontsize=8)
@@ -654,13 +920,19 @@ class InvoiceGenerator:
 				for text in texts:
 					text.set_fontsize(10)
 				
-				# Remove title from chart (we have it in the Paragraph above)
-				plt.tight_layout(pad=2.0)
-				img_path = self._save_temp_image(fig, 'category_breakdown')
+				# Ensure circular shape - set equal aspect and adjust layout
+				ax.set_aspect('equal')
+				plt.axis('equal')  # Additional safeguard for circular pie chart
+				# Use tight_layout with rect parameter to maintain square shape
+				plt.tight_layout(pad=2.0, rect=[0, 0, 1, 1])
+				# Save with fixed aspect ratio (no tight bbox for pie charts)
+				fd, img_path = tempfile.mkstemp(suffix='.png', prefix='category_breakdown_')
+				os.close(fd)
+				fig.savefig(img_path, dpi=150, bbox_inches=None, facecolor='white', pad_inches=0.2)
 				self._temp_images.append(img_path)
 				# Keep image and label together - use same size as figure to prevent distortion
 				chart_elements = [
-					Paragraph("<b>Hours by Category</b>", self.styles['InvoiceHeader']),
+					Paragraph("<b>Hours by Category</b><br/><p>This chart shows work categorized by type (Feature, Fix, Maintenance). Categories are determined at the card level based on card labels, names, and commit messages. Cards may contain multiple types of work, which is why you see combined categories like 'FEAT/FIX/MAINT'. Hours shown are from billed line items only.</p>", self.styles['InvoiceHeader']),
 					Spacer(1, 0.1*inch),
 					Image(img_path, width=6*inch, height=6*inch)  # Match figure size to prevent squeezing
 				]
@@ -677,6 +949,105 @@ class InvoiceGenerator:
 				except:
 					pass
 			raise
+	
+	def _extract_comment_hours_by_date(self, cards: List[Dict], since_date: str = None) -> Dict[str, float]:
+		"""
+		Extract comment hours grouped by date from Trello cards
+		
+		Args:
+			cards: List of card dictionaries with 'actions' containing comments
+			since_date: Only count comments since this date (YYYY-MM-DD)
+			
+		Returns:
+			Dictionary mapping date strings (YYYY-MM-DD) to total comment hours on that date
+		"""
+		from trello_client import TrelloClient
+		try:
+			from dateutil import parser as date_parser
+		except ImportError:
+			date_parser = None
+		from datetime import datetime
+		import re
+		
+		daily_comment_hours = defaultdict(float)
+		
+		hour_patterns = [
+			r'(?:^|[^\d@])(\d+\.?\d*)\s*h(?:ours?|rs?)(?:\s|$|[^\d])',
+			r'spent\s+(\d+\.?\d*)\s*h(?:ours?|rs?)(?:\s|$|[^\d])',
+			r'worked\s+(\d+\.?\d*)\s*h(?:ours?|rs?)(?:\s|$|[^\d])',
+			r'hours?:\s*(\d+\.?\d*)(?:\s|$|[^\d])',
+			r'\[(\d+\.?\d*)\s*h(?:ours?|rs?)\]',
+		]
+		
+		minute_patterns = [
+			r'(?:^|[^\d@])(\d+\.?\d*)\s*(?:min|mins|minutes?)(?:\s|$|[^\d])',
+			r'spent\s+(\d+\.?\d*)\s*(?:min|mins|minutes?)(?:\s|$|[^\d])',
+			r'worked\s+(\d+\.?\d*)\s*(?:min|mins|minutes?)(?:\s|$|[^\d])',
+			r'minutes?:\s*(\d+\.?\d*)(?:\s|$|[^\d])',
+			r'\[(\d+\.?\d*)\s*(?:min|mins|minutes?)\]',
+		]
+		
+		for card in cards:
+			actions = card.get('actions', [])
+			comments = [a for a in actions if a.get('type') == 'commentCard']
+			
+			for comment in comments:
+				comment_date_str = comment.get('date', '')
+				if not comment_date_str:
+					continue
+				
+				# Parse comment date
+				if not date_parser:
+					# If dateutil not available, skip date parsing
+					continue
+				
+				try:
+					comment_dt = date_parser.parse(comment_date_str)
+					comment_date = comment_dt.date().strftime('%Y-%m-%d')
+					
+					# Filter by since_date if provided
+					if since_date:
+						try:
+							since_dt = datetime.strptime(since_date, '%Y-%m-%d')
+							if comment_dt.date() < since_dt.date():
+								continue
+						except ValueError:
+							pass
+				except:
+					continue
+				
+				# Extract hours from comment text
+				text = comment.get('data', {}).get('text', '')
+				if not text:
+					continue
+				
+				# Try hours patterns first
+				matched = False
+				for pattern in hour_patterns:
+					matches = re.findall(pattern, text, re.IGNORECASE)
+					if matches:
+						try:
+							hours = float(matches[0])
+							daily_comment_hours[comment_date] += hours
+							matched = True
+							break
+						except ValueError:
+							continue
+				
+				# If no hours found, try minutes patterns
+				if not matched:
+					for pattern in minute_patterns:
+						matches = re.findall(pattern, text, re.IGNORECASE)
+						if matches:
+							try:
+								minutes = float(matches[0])
+								hours = round(minutes / 60.0, 2)
+								daily_comment_hours[comment_date] += hours
+								break
+							except ValueError:
+								continue
+		
+		return dict(daily_comment_hours)
 	
 	def _save_temp_image(self, fig, prefix: str) -> str:
 		"""

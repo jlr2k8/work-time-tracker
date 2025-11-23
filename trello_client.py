@@ -189,7 +189,14 @@ class TrelloClient:
 			if not text:
 				continue
 			
-			# Try hours patterns first
+			# Check for qualitative time phrases first (before numeric patterns)
+			text_lower = text.lower()
+			if re.search(r'less\s+than\s+(?:an\s+)?(?:hour|hr|h)\b', text_lower):
+				# "less than an hour" or "less than hour" = 0.5 hours
+				total_hours += 0.5
+				continue  # Skip to next comment
+			
+			# Try hours patterns
 			for pattern in hour_patterns:
 				matches = re.findall(pattern, text, re.IGNORECASE)
 				if matches:
@@ -266,12 +273,17 @@ class TrelloClient:
 				minutes = float(match.group(1))
 				return round(minutes / 60.0, 2)
 			
-			# Pattern 3: "[2h]" or "[1.5 hours]"
+			# Pattern 3: "(Max 6 Hours)" or "(Max 2 hours)" - handle Max format
+			match = re.search(r'\(max\s+(\d+\.?\d*)\s*h(?:ours?)?\)', name, re.IGNORECASE)
+			if match:
+				return float(match.group(1))
+			
+			# Pattern 4: "[2h]" or "[1.5 hours]"
 			match = re.search(r'\[(\d+\.?\d*)\s*h(?:ours?)?\]', name, re.IGNORECASE)
 			if match:
 				return float(match.group(1))
 			
-			# Pattern 4: "Est: 2h" or "Est 3 hours" (without parentheses)
+			# Pattern 5: "Est: 2h" or "Est 3 hours" (without parentheses)
 			match = re.search(r'est:?\s*(\d+\.?\d*)\s*h(?:ours?)?', name, re.IGNORECASE)
 			if match:
 				return float(match.group(1))

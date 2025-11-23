@@ -126,6 +126,23 @@ python track_work.py ../myproject 2025-11-01 "john|John" \
   --skip-warnings
 ```
 
+### Generating Example Invoices
+
+To demonstrate the invoice system to stakeholders or test the invoice format, you can generate an example invoice with fake data:
+
+```bash
+python generate_example_invoice.py
+```
+
+This will create `invoice_INV_001.pdf` with:
+- Sample line items with realistic task descriptions
+- Complete breakdown page showing all visualizations
+- Example commit data and Trello card matching
+- All charts and graphs (pie charts, bar charts, daily timelines)
+- Per-card breakdown with commit details
+
+The example invoice uses fake data and won't affect your actual tracking. You can customize the sender/recipient information in the script if needed.
+
 ## Configuration
 
 ### Environment Variables
@@ -135,6 +152,7 @@ Set these in your `.env` file or as environment variables:
 - `TRELLO_API_KEY`: Your Trello API key
 - `TRELLO_API_TOKEN`: Your Trello API token
 - `TRELLO_BOARD_ID`: (Optional) Default Trello board ID
+- `TRELLO_MEMBER_ID`: (Optional) Your Trello member ID for filtering cards assigned to you
 - `HOURLY_RATE`: (Optional) Hourly billing rate (default: 80.0)
 - `EXCLUDED_CARDS`: (Optional) Comma-separated list of card numbers to exclude from invoices (e.g., "102,103")
 - `SENDER_NAME`: (Optional) Your name for invoices (default: "Your Name")
