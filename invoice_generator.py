@@ -330,11 +330,22 @@ class InvoiceGenerator:
 						card_text += "..."
 					story.append(Paragraph(card_text, self.styles['LineItem']))
 					
-					# Hours breakdown
-					hours_text = f"Hours: {commit_hours:.2f}h commits"
-					if comment_hours > 0:
-						hours_text += f" + {comment_hours:.2f}h mentioned in Trello comments"
-					hours_text += f" = {total_hours:.2f}h total"
+					# Hours breakdown - show weighted contributions when both exist
+					if comment_hours > 0 and commit_hours > 0:
+						# Both exist - show weighted contributions (90% comment, 10% commit)
+						comment_contribution = comment_hours * 0.9
+						commit_contribution = commit_hours * 0.1
+						hours_text = f"Hours: {comment_hours:.2f}h comments (90% = {comment_contribution:.2f}h)"
+						hours_text += f" + {commit_hours:.2f}h commits (10% = {commit_contribution:.2f}h)"
+						hours_text += f" = {total_hours:.2f}h total"
+					elif comment_hours > 0:
+						# Only comment hours
+						hours_text = f"Hours: {comment_hours:.2f}h mentioned in Trello comments = {total_hours:.2f}h total"
+					elif commit_hours > 0:
+						# Only commit hours
+						hours_text = f"Hours: {commit_hours:.2f}h commits = {total_hours:.2f}h total"
+					else:
+						hours_text = f"Hours: {total_hours:.2f}h total"
 					story.append(Paragraph(hours_text, self.styles['LineItemWrap']))
 					
 					# Commit matching info
@@ -421,7 +432,7 @@ class InvoiceGenerator:
 					story.append(Spacer(1, 0.3*inch))
 					plt.close(fig)
 			
-			# 2. Hours by Card Bar Chart (Top 10 cards)
+			# 2. Hours by Card Bar Chart (All cards)
 			# Only show cards that are actually in line_items (billed items)
 			if stats.get('trello_enabled') and 'estimation_details' in stats:
 				details = stats['estimation_details']
@@ -431,7 +442,7 @@ class InvoiceGenerator:
 				import track_work
 				billed_task_nums = {item.get('task_number', '') for item in line_items}
 				
-				# Get top cards by hours - ONLY from billed items
+				# Get all cards by hours - ONLY from billed items
 				card_data = []
 				for match in matched_cards:
 					card = match['card']
@@ -450,13 +461,14 @@ class InvoiceGenerator:
 							display_name += "..."
 						card_data.append((display_name, total_hours))
 				
-				# Sort by hours and take top 10
+				# Sort by hours (highest first)
 				card_data.sort(key=lambda x: x[1], reverse=True)
-				card_data = card_data[:10]
 				
 				if card_data:
-					# Reduce figure size to fit page
-					fig, ax = plt.subplots(figsize=(6, 4.5))
+					# Adjust figure height based on number of cards (min 4.5, max 12 inches)
+					num_cards = len(card_data)
+					height = max(4.5, min(12.0, 0.4 * num_cards + 2.0))
+					fig, ax = plt.subplots(figsize=(6, height))
 					cards, hours = zip(*card_data) if card_data else ([], [])
 					
 					bars = ax.barh(range(len(cards)), hours, color='#3498db')
@@ -479,33 +491,92 @@ class InvoiceGenerator:
 					plt.tight_layout(pad=1.5)
 					img_path = self._save_temp_image(fig, 'hours_by_card')
 					self._temp_images.append(img_path)
-					# Keep image and label together
+					# Keep image and label together - adjust image height to match figure
 					chart_elements = [
-						Paragraph("<b>Hours by Card (Top 10)</b>", self.styles['InvoiceHeader']),
+						Paragraph("<b>Hours by Card</b>", self.styles['InvoiceHeader']),
 						Spacer(1, 0.1*inch),
-						Image(img_path, width=6*inch, height=4.5*inch)  # Maintain aspect ratio
+						Image(img_path, width=6*inch, height=height*inch)  # Dynamic height
 					]
 					story.append(KeepTogether(chart_elements))
 					story.append(Spacer(1, 0.3*inch))
 					plt.close(fig)
 			
 			# 3. Daily Work Distribution
-			if stats.get('commits'):
+			# Calculate per-card first (matching invoice logic), then sum by date
+			daily_hours = defaultdict(float)  # Initialize here for both paths
+			if stats.get('trello_enabled') and 'estimation_details' in stats:
+				details = stats['estimation_details']
+				matched_cards = details.get('matched_cards', [])
+				
+				# Calculate hours per day per card, then sum (matching invoice calculation)
+				
+				# Process each card separately to apply weighted average correctly
+				for match in matched_cards:
+					card = match['card']
+					card_commits = match.get('commits', [])
+					
+					# Get comment hours for this card by date
+					card_comment_hours_by_date = self._extract_comment_hours_by_date([card], since_date=None)
+					
+					# Get commit hours for this card by date
+					card_commits_by_date = defaultdict(list)
+					non_merge_commits = [c for c in card_commits if 'merge' not in c.get('message', '').lower()]
+					for commit in non_merge_commits:
+						date = commit.get('date', '')
+						if date:
+							card_commits_by_date[date].append(commit)
+					
+					# Calculate commit hours per day for this card
+					card_commit_hours_by_date = defaultdict(float)
+					for date, day_commits in card_commits_by_date.items():
+						total_lines = sum(c.get('lines_changed', 0) for c in day_commits)
+						messages = [c.get('message', '').lower() for c in day_commits]
+						
+						has_major_feature = any(
+							'feature' in msg or 'feat' in msg or 
+							'oauth' in msg or 'setup' in msg or
+							'refactor' in msg or 'architecture' in msg
+							for msg in messages
+						)
+						has_docs = any('doc' in msg or 'readme' in msg or 'comment' in msg for msg in messages)
+						
+						if has_major_feature:
+							lines_per_hour = 200
+						elif has_docs:
+							lines_per_hour = 400
+						else:
+							lines_per_hour = 250
+						
+						if total_lines > 0:
+							day_commit_hours = max(0.25, total_lines / lines_per_hour)
+						else:
+							day_commit_hours = 0.25 if len(day_commits) > 0 else 0.0
+						
+						card_commit_hours_by_date[date] = day_commit_hours
+					
+					# For each date this card has work, calculate weighted average per card
+					all_card_dates = set(card_comment_hours_by_date.keys()) | set(card_commits_by_date.keys())
+					for date in all_card_dates:
+						card_comment_hours = card_comment_hours_by_date.get(date, 0.0)
+						card_commit_hours = card_commit_hours_by_date.get(date, 0.0)
+						
+						# Apply weighted average per card (same as invoice calculation)
+						if card_comment_hours > 0:
+							if card_commit_hours > 0:
+								# Both exist - use weighted average
+								card_total_hours = (card_comment_hours * 0.9) + (card_commit_hours * 0.1)
+							else:
+								# Only comment hours
+								card_total_hours = card_comment_hours
+						else:
+							# Only commit hours
+							card_total_hours = card_commit_hours
+						
+						# Sum across all cards for this date
+						daily_hours[date] += card_total_hours
+			elif stats.get('commits'):
+				# Fallback: no Trello, use commit-based estimation only
 				commits = stats['commits']
-				# Group commits by date and calculate hours per day
-				daily_commit_hours = defaultdict(float)
-				daily_comment_hours_dict = defaultdict(float)
-				
-				# Get comment hours by date from matched cards (if available)
-				if stats.get('trello_enabled') and 'estimation_details' in stats:
-					details = stats['estimation_details']
-					matched_cards = details.get('matched_cards', [])
-					# Get all cards from matched_cards
-					cards = [match['card'] for match in matched_cards]
-					# Extract comment hours by date (pass None for since_date to get all dates)
-					daily_comment_hours_dict = self._extract_comment_hours_by_date(cards, since_date=None)
-				
-				# Group commits by date
 				commits_by_date = defaultdict(list)
 				non_merge_commits = [c for c in commits if 'merge' not in c.get('message', '').lower()]
 				for commit in non_merge_commits:
@@ -513,12 +584,11 @@ class InvoiceGenerator:
 					if date:
 						commits_by_date[date].append(commit)
 				
-				# Calculate commit-based hours per day using same logic as track_work.py
+				# Calculate commit-based hours per day
 				for date, day_commits in commits_by_date.items():
 					total_lines = sum(c.get('lines_changed', 0) for c in day_commits)
 					messages = [c.get('message', '').lower() for c in day_commits]
 					
-					# Determine lines per hour based on complexity
 					has_major_feature = any(
 						'feature' in msg or 'feat' in msg or 
 						'oauth' in msg or 'setup' in msg or
@@ -534,33 +604,12 @@ class InvoiceGenerator:
 					else:
 						lines_per_hour = 250
 					
-					# Calculate hours from lines
 					if total_lines > 0:
 						day_commit_hours = max(0.25, total_lines / lines_per_hour)
 					else:
 						day_commit_hours = 0.25 if len(day_commits) > 0 else 0.0
 					
-					daily_commit_hours[date] = day_commit_hours
-				
-				# Combine commit hours and comment hours using same weighted average as cards
-				# Formula: (comment_hours × 0.9) + (commit_hours × 0.1) when both exist
-				daily_hours = defaultdict(float)
-				all_dates = set(list(daily_commit_hours.keys()) + list(daily_comment_hours_dict.keys()))
-				
-				for date in all_dates:
-					commit_hours = daily_commit_hours.get(date, 0.0)
-					comment_hours = daily_comment_hours_dict.get(date, 0.0)
-					
-					if comment_hours > 0:
-						if commit_hours > 0:
-							# Both exist - use weighted average (same as card calculation)
-							daily_hours[date] = (comment_hours * 0.9) + (commit_hours * 0.1)
-						else:
-							# Only comment hours exist
-							daily_hours[date] = comment_hours
-					else:
-						# No comment hours, use commit-based estimation
-						daily_hours[date] = commit_hours
+					daily_hours[date] = day_commit_hours
 				
 				if daily_hours:
 					# Sort by date
