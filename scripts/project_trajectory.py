@@ -6,8 +6,12 @@ Project work hours trajectory to Nov 30 based on current data
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from track_work import get_commit_stats, estimate_hours_from_commits
-from config import Config
+
+# Add parent directory to path to import from src
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from src.track_work import get_commit_stats, estimate_hours_from_commits
+from src.config import Config
 
 def calculate_trajectory(repo_path: str, since_date: str = "2025-11-01", author: str = None):
     """

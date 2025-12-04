@@ -5,10 +5,12 @@ Check which cards assigned to you don't have estimated hours in their titles
 
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent))
 
-from config import Config
-from trello_client import TrelloClient
+# Add parent directory to path to import from src
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from src.config import Config
+from src.trello_client import TrelloClient
 
 def check_missing_estimates():
 	"""Find cards assigned to you that don't have estimated hours in their titles"""

@@ -6,8 +6,12 @@ Simple projection: Use invoiced hours so far to project to Nov 30
 import sys
 from datetime import datetime
 from pathlib import Path
-from track_work import get_commit_stats
-from config import Config
+
+# Add parent directory to path to import from src
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from src.track_work import get_commit_stats
+from src.config import Config
 
 def simple_projection(repo_path: str, since_date: str = "2025-11-01", author: str = None):
     """

@@ -13,9 +13,6 @@ ENV/
 .env
 .env.local
 
-# Generated invoices
-invoice_*.pdf
-
 # IDE
 .vscode/
 .idea/
@@ -23,10 +20,13 @@ invoice_*.pdf
 *.swo
 *~
 
+# Generated invoices
+invoices/
+
 # OS
 .DS_Store
 Thumbs.db
 
-# Logs
+# Temporary files
+*.tmp
 *.log
-

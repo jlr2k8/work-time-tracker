@@ -7,9 +7,12 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
-from config import Config
-from trello_client import TrelloClient
-from track_work import get_commits_since, get_commit_stats
+# Add parent directory to path to import from src
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from src.config import Config
+from src.trello_client import TrelloClient
+from src.track_work import get_commits_since, get_commit_stats
 
 def debug_card_matches(repo_path: str, since_date: str, card_number: str, 
                       author: str = None, trello_board_id: str = None):

@@ -3,9 +3,15 @@
 Generate an example invoice PDF with fake data for demonstration purposes
 """
 
+import sys
+from pathlib import Path
+
+# Add parent directory to path to import from src
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from datetime import datetime, timedelta
-from invoice_generator import InvoiceGenerator, create_invoice_from_tracking_data
-from config import Config
+from src.invoice_generator import InvoiceGenerator, create_invoice_from_tracking_data
+from src.config import Config
 
 def generate_example_invoice():
     """Generate an example invoice with realistic fake data"""

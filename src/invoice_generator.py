@@ -299,7 +299,7 @@ class InvoiceGenerator:
 			
 			# Create mapping from task number to matched card data
 			# Import here to avoid circular dependency
-			import track_work
+			from . import track_work
 			task_to_match = {}
 			for match in matched_cards:
 				card = match['card']
@@ -439,7 +439,7 @@ class InvoiceGenerator:
 				matched_cards = details.get('matched_cards', [])
 				
 				# Create set of task numbers from line_items (billed items only)
-				import track_work
+				from . import track_work
 				billed_task_nums = {item.get('task_number', '') for item in line_items}
 				
 				# Get all cards by hours - ONLY from billed items
@@ -465,15 +465,26 @@ class InvoiceGenerator:
 				card_data.sort(key=lambda x: x[1], reverse=True)
 				
 				if card_data:
-					# Adjust figure height based on number of cards (min 4.5, max 12 inches)
+					# Adjust figure height based on number of cards
+					# Cap at 7 inches to ensure title + chart fit on one page
+					# (Page height: 11" - 1.5" margins = 9.5", title ~0.3", spacing ~0.1", buffer ~1.5" = ~7" max)
 					num_cards = len(card_data)
-					height = max(4.5, min(12.0, 0.4 * num_cards + 2.0))
+					calculated_height = max(4.5, min(12.0, 0.4 * num_cards + 2.0))
+					max_height = 7.0  # Maximum height to keep title and chart together
+					height = min(calculated_height, max_height)
+					
+					# If we had to shrink, reduce bar spacing and font size to fit more cards
+					scale_factor = height / calculated_height if calculated_height > max_height else 1.0
 					fig, ax = plt.subplots(figsize=(6, height))
 					cards, hours = zip(*card_data) if card_data else ([], [])
 					
-					bars = ax.barh(range(len(cards)), hours, color='#3498db')
+					# Adjust font sizes based on scale factor
+					label_fontsize = max(6, int(7 * scale_factor))
+					value_fontsize = max(6, int(7 * scale_factor))
+					
+					bars = ax.barh(range(len(cards)), hours, color='#3498db', height=0.7 * scale_factor)
 					ax.set_yticks(range(len(cards)))
-					ax.set_yticklabels(cards, fontsize=7)
+					ax.set_yticklabels(cards, fontsize=label_fontsize)
 					ax.set_xlabel('Hours', fontsize=9, fontweight='bold')
 					ax.invert_yaxis()  # Top card at top
 					
@@ -486,15 +497,16 @@ class InvoiceGenerator:
 					for i, (bar, hour) in enumerate(zip(bars, hours)):
 						width = bar.get_width()
 						ax.text(width + 0.1, bar.get_y() + bar.get_height()/2, 
-							   f'{hour:.1f}h', ha='left', va='center', fontsize=7)
+							   f'{hour:.1f}h', ha='left', va='center', fontsize=value_fontsize)
 					
-					plt.tight_layout(pad=1.5)
+					# Reduce padding, especially top margin, to bring chart closer to title
+					plt.tight_layout(pad=0.3, h_pad=0.5, w_pad=0.5)
 					img_path = self._save_temp_image(fig, 'hours_by_card')
 					self._temp_images.append(img_path)
 					# Keep image and label together - adjust image height to match figure
 					chart_elements = [
 						Paragraph("<b>Hours by Card</b>", self.styles['InvoiceHeader']),
-						Spacer(1, 0.1*inch),
+						Spacer(1, 0.05*inch),  # Reduced spacing between title and chart
 						Image(img_path, width=6*inch, height=height*inch)  # Dynamic height
 					]
 					story.append(KeepTogether(chart_elements))
@@ -519,8 +531,21 @@ class InvoiceGenerator:
 					card_comment_hours_by_date = self._extract_comment_hours_by_date([card], since_date=None)
 					
 					# Get commit hours for this card by date
+					# Filter out merge pull requests and merge conflict resolutions - they don't represent actual work time
 					card_commits_by_date = defaultdict(list)
-					non_merge_commits = [c for c in card_commits if 'merge' not in c.get('message', '').lower()]
+					msg_lower = lambda c: c.get('message', '').lower()
+					non_merge_commits = [
+						c for c in card_commits 
+						if not ('merge pull request' in msg_lower(c) or 
+								'merge pr' in msg_lower(c) or
+								msg_lower(c).startswith('merge pull request') or
+								msg_lower(c).startswith('merge pr') or
+								('merge' in msg_lower(c) and 'branch' in msg_lower(c)) or
+								'resolve merge conflict' in msg_lower(c) or
+								'merge conflict' in msg_lower(c) or
+								'resolved merge conflict' in msg_lower(c) or
+								'fix merge conflict' in msg_lower(c))
+					]
 					for commit in non_merge_commits:
 						date = commit.get('date', '')
 						if date:
@@ -650,7 +675,7 @@ class InvoiceGenerator:
 				matched_cards = details.get('matched_cards', [])
 				
 				# Only use cards that are actually billed (in line_items)
-				import track_work
+				from . import track_work
 				billed_task_nums = {item.get('task_number', '') for item in line_items}
 				billed_cards = []
 				for match in matched_cards:
@@ -861,7 +886,7 @@ class InvoiceGenerator:
 				# Get cards with estimated hours and/or actual hours for comparison
 				# Include all cards that have either estimated hours OR total hours (actual work)
 				comparison_data = []
-				import track_work
+				from . import track_work
 				billed_task_nums = {item.get('task_number', '') for item in line_items}
 				
 				for match in matched_cards:
@@ -1010,7 +1035,7 @@ class InvoiceGenerator:
 		Returns:
 			Dictionary mapping date strings (YYYY-MM-DD) to total comment hours on that date
 		"""
-		from trello_client import TrelloClient
+		from .trello_client import TrelloClient
 		try:
 			from dateutil import parser as date_parser
 		except ImportError:
@@ -1145,10 +1170,15 @@ def create_invoice_from_tracking_data(stats: Dict,
 	# Generate filename
 	inv_num = generator.generate_invoice_number(invoice_number)
 	filename = f"invoice_{inv_num.replace('-', '_')}.pdf"
-	output_path = Path(output_dir) / filename
+	
+	# Ensure output directory exists
+	output_dir_path = Path(output_dir)
+	output_dir_path.mkdir(parents=True, exist_ok=True)
+	
+	output_path = output_dir_path / filename
 	
 	# Get config for breakdown page
-	from config import Config
+	from .config import Config
 	config = Config()
 	
 	generator.create_invoice(

@@ -5,10 +5,12 @@ Debug script to show exactly what hours are found for a specific card
 
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent))
 
-from config import Config
-from trello_client import TrelloClient
+# Add parent directory to path to import from src
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from src.config import Config
+from src.trello_client import TrelloClient
 
 config = Config()
 trello_client = TrelloClient(config.trello_api_key, config.trello_api_token)

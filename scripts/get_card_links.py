@@ -7,12 +7,12 @@ import sys
 import os
 from pathlib import Path
 
-# Add the current directory to the path so we can import modules
-sys.path.insert(0, str(Path(__file__).parent))
+# Add parent directory to path to import from src
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from track_work import get_commit_stats, generate_invoice_line_items, extract_task_number
-from config import Config
-from trello_client import TrelloClient
+from src.track_work import get_commit_stats, generate_invoice_line_items, extract_task_number
+from src.config import Config
+from src.trello_client import TrelloClient
 
 def get_card_links_for_invoice(since_date: str, repo_path: str = '.', author: str = None, task_numbers: list = None):
 	"""

@@ -26,6 +26,32 @@ pip install -r requirements.txt
    # Edit .env with your Trello credentials
    ```
 
+## Project Structure
+
+```
+work-time-tracker/
+├── src/                    # Core modules
+│   ├── config.py          # Configuration management
+│   ├── trello_client.py   # Trello API client
+│   ├── invoice_generator.py # Invoice PDF generator
+│   └── track_work.py      # Main tracking logic
+├── scripts/                # Utility scripts
+│   ├── check_assignment.py
+│   ├── check_missing_estimates.py
+│   ├── debug_card_hours.py
+│   ├── debug_card_match.py
+│   ├── generate_example_invoice.py
+│   ├── get_card_links.py
+│   ├── invoice_projection.py
+│   ├── project_trajectory.py
+│   ├── simple_projection.py
+│   └── test_comment_parsing.py
+├── invoices/              # Generated invoice PDFs
+├── track_work.py          # Main entry point (convenience script)
+├── README.md
+└── requirements.txt
+```
+
 ## Usage
 
 ### Basic Usage (Git Only)
@@ -54,6 +80,14 @@ python track_work.py ../myproject 2025-11-01 "john|John"
 
 # With Trello board ID (if not in .env)
 python track_work.py ../myproject 2025-11-01 "john|John" abc123xyz
+```
+
+### Alternative: Run as Module
+
+You can also run the main module directly:
+
+```bash
+python -m src.track_work <repo_path> [since_date] [author] [trello_board_id]
 ```
 
 ## Command-Line Flags
@@ -131,7 +165,7 @@ python track_work.py ../myproject 2025-11-01 "john|John" \
 To demonstrate the invoice system to stakeholders or test the invoice format, you can generate an example invoice with fake data:
 
 ```bash
-python generate_example_invoice.py
+python scripts/generate_example_invoice.py
 ```
 
 This will create `invoice_INV_001.pdf` with:
