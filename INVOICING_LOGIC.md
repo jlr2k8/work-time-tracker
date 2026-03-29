@@ -125,7 +125,7 @@ A: No. It extracts hours **reported in comments** (e.g., "worked 3h"), not time 
 A: The weighted average will use: (2h × 0.8) + (25h × 0.2) = 1.6h + 5h = 6.6h. This prevents under-billing while still respecting your logged time.
 
 **Q: Can I change the 80/20 weighting?**
-A: Yes, the weights are in `track_work.py` line 380. Adjust the 0.8 and 0.2 values as needed.
+A: Yes, the weights are in `track_work.py` - Adjust the 0.8 and 0.2 values as needed.
 
 ## Summary
 
